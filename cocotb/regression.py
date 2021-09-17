@@ -35,6 +35,7 @@ import os
 import traceback
 import pdb
 from typing import Any, Optional, Tuple, Iterable
+from functools import wraps
 
 import cocotb
 import cocotb.ANSI as ANSI
@@ -92,6 +93,7 @@ class RegressionManager:
         self.start_time = time.time()
         self.test_results = []
         self.count = 0
+        self.passed = 0
         self.skipped = 0
         self.failures = 0
         self._tearing_down = False
@@ -230,8 +232,6 @@ class RegressionManager:
 
         # Write out final log messages
         self._log_test_summary()
-        self._log_sim_summary()
-        self.log.info("Shutting down...")
 
         # Generate output reports
         self.xunit.write()
@@ -285,15 +285,18 @@ class RegressionManager:
         """
 
         if test.skip:
-            hilight_start = ANSI.COLOR_TEST if want_color_output() else ''
+            hilight_start = ANSI.COLOR_SKIPPED if want_color_output() else ''
             hilight_end = ANSI.COLOR_DEFAULT if want_color_output() else ''
             # Want this to stand out a little bit
-            self.log.info("{}Skipping test {}/{}:{} {}".format(
-                hilight_start,
-                self.count,
-                self.ntests,
-                hilight_end,
-                test.__qualname__))
+            self.log.info(
+                "{start}skipping{end} {name} ({i}/{total})".format(
+                    start=hilight_start,
+                    i=self.count,
+                    total=self.ntests,
+                    end=hilight_end,
+                    name=test.__qualname__
+                )
+            )
             self._record_result(test, None, 0, 0)
             return None
 
@@ -313,12 +316,6 @@ class RegressionManager:
         Given a test and the test's outcome, determine if the test met expectations and log pertinent information
         """
 
-        # Helper for logging result
-        def _result_was():
-            result_was = ("{} (result was {})".format
-                          (test.__qualname__, type(result).__qualname__))
-            return result_was
-
         # scoring outcomes
         result_pass = True
         sim_failed = False
@@ -330,51 +327,83 @@ class RegressionManager:
         else:
             result = TestSuccess()
 
-        if (isinstance(result, TestSuccess) and
-                not test.expect_fail and
-                not test.expect_error):
-            self.log.info("Test Passed: %s" % test.__qualname__)
+        if (
+            isinstance(result, TestSuccess)
+            and not test.expect_fail
+            and not test.expect_error
+        ):
+            self._log_test_passed(test, None, None)
 
-        elif (isinstance(result, AssertionError) and
-                test.expect_fail):
-            self.log.info("Test failed as expected: " + _result_was())
+        elif isinstance(result, AssertionError) and test.expect_fail:
+            self._log_test_passed(
+                test, result, "failed as expected"
+            )
 
-        elif (isinstance(result, TestSuccess) and
-              test.expect_error):
-            self.log.error("Test passed but we expected an error: " +
-                           _result_was())
+        elif isinstance(result, TestSuccess) and test.expect_error:
+            self._log_test_failed(
+                test, None, "passed but we expected an error"
+            )
             result_pass = False
 
         elif isinstance(result, TestSuccess):
-            self.log.error("Test passed but we expected a failure: " +
-                           _result_was())
+            self._log_test_failed(
+                test, None, "passed but we expected a failure"
+            )
             result_pass = False
 
         elif isinstance(result, SimFailure):
             if isinstance(result, test.expect_error):
-                self.log.info("Test errored as expected: " + _result_was())
+                self._log_test_passed(test, result, "errored as expected")
             else:
-                self.log.error("Test error has lead to simulator shutting us "
-                               "down", exc_info=result)
+                self.log.error("Test error has lead to simulator shutting us down")
                 result_pass = False
             # whether we expected it or not, the simulation has failed unrecoverably
             sim_failed = True
 
         elif test.expect_error:
             if isinstance(result, test.expect_error):
-                self.log.info("Test errored as expected: " + _result_was())
+                self._log_test_passed(test, result, "errored as expected")
             else:
-                self.log.error("Test errored with unexpected type: " + _result_was(), exc_info=result)
+                self._log_test_failed(test, result, "errored with unexpected type ")
                 result_pass = False
 
         else:
-            self.log.error("Test Failed: " + _result_was(), exc_info=result)
+            self._log_test_failed(test, result, None)
             result_pass = False
 
             if _pdb_on_exception:
                 pdb.post_mortem(result.__traceback__)
 
         return result_pass, sim_failed
+
+    def _log_test_passed(
+        self, test: Test, result: Optional[Exception] = None, msg: Optional[str] = None
+    ) -> None:
+        start_hilight = ANSI.COLOR_PASSED if want_color_output() else ""
+        stop_hilight = ANSI.COLOR_DEFAULT if want_color_output() else ""
+        if msg is None:
+            rest = ""
+        else:
+            rest = f": {msg}"
+        if result is None:
+            result_was = ""
+        else:
+            result_was = f" (result was {type(result).__qualname__})"
+        self.log.info(f"{test} {start_hilight}passed{stop_hilight}{rest}{result_was}")
+
+    def _log_test_failed(
+        self, test: Test, result: Optional[Exception] = None, msg: Optional[str] = None
+    ) -> None:
+        start_hilight = ANSI.COLOR_FAILED if want_color_output() else ""
+        stop_hilight = ANSI.COLOR_DEFAULT if want_color_output() else ""
+        if msg is None:
+            rest = ""
+        else:
+            rest = f": {msg}"
+        self.log.info(
+            f"{test} {start_hilight}failed{stop_hilight}{rest}",
+            exc_info=result
+        )
 
     def _record_result(
         self,
@@ -408,6 +437,8 @@ class RegressionManager:
             if not test_pass:
                 self.xunit.add_failure()
                 self.failures += 1
+            else:
+                self.passed += 1
 
         self.test_results.append({
             'test': '.'.join([test.__module__, test.__qualname__]),
@@ -437,11 +468,15 @@ class RegressionManager:
             start = ANSI.COLOR_TEST
             end = ANSI.COLOR_DEFAULT
         # Want this to stand out a little bit
-        self.log.info("%sRunning test %d/%d:%s %s" %
-                      (start,
-                       self.count, self.ntests,
-                       end,
-                       self._test.__qualname__))
+        self.log.info(
+            "{start}running{end} {name} ({i}/{total})".format(
+                start=start,
+                i=self.count,
+                total=self.ntests,
+                end=end,
+                name=self._test.__qualname__,
+            )
+        )
 
         self._test_start_time = time.time()
         self._test_start_sim_time = get_sim_time('ns')
@@ -449,23 +484,25 @@ class RegressionManager:
 
     def _log_test_summary(self) -> None:
 
-        if self.failures:
-            self.log.error("Failed %d out of %d tests (%d skipped)" %
-                           (self.failures, self.count, self.skipped))
-        else:
-            self.log.info("Passed %d tests (%d skipped)" %
-                          (self.count, self.skipped))
+        real_time = time.time() - self.start_time
+        sim_time_ns = get_sim_time('ns')
+        ratio_time = self._safe_divide(sim_time_ns, real_time)
 
         if len(self.test_results) == 0:
             return
 
         TEST_FIELD = 'TEST'
-        RESULT_FIELD = 'PASS/FAIL'
-        SIM_FIELD = 'SIM TIME(NS)'
-        REAL_FIELD = 'REAL TIME(S)'
-        RATIO_FIELD = 'RATIO(NS/S)'
+        RESULT_FIELD = 'STATUS'
+        SIM_FIELD = 'SIM TIME (ns)'
+        REAL_FIELD = 'REAL TIME (s)'
+        RATIO_FIELD = 'RATIO (ns/s)'
+        TOTAL_NAME = f"TESTS={self.ntests} PASS={self.passed} FAIL={self.failures} SKIP={self.skipped}"
 
-        TEST_FIELD_LEN = max(len(TEST_FIELD), len(max([x['test'] for x in self.test_results], key=len)))
+        TEST_FIELD_LEN = max(
+            len(TEST_FIELD),
+            len(TOTAL_NAME),
+            len(max([x['test'] for x in self.test_results], key=len))
+        )
         RESULT_FIELD_LEN = len(RESULT_FIELD)
         SIM_FIELD_LEN = len(SIM_FIELD)
         REAL_FIELD_LEN = len(REAL_FIELD)
@@ -493,19 +530,28 @@ class RegressionManager:
         summary += "** {a:<{a_len}}  {b:^{b_len}}  {c:>{c_len}}  {d:>{d_len}}  {e:>{e_len}} **\n".format(**header_dict)
         summary += LINE_SEP
 
-        test_line = "{start}** {a:<{a_len}}  {b:^{b_len}}  {c:>{c_len}.2f}   {d:>{d_len}.2f}   {e:>{e_len}.2f}  **{end}\n"
+        test_line = "** {a:<{a_len}}  {start}{b:^{b_len}}{end}  {c:>{c_len}.2f}   {d:>{d_len}.2f}   {e:>{e_len}}  **\n"
         for result in self.test_results:
             hilite = ''
             lolite = ''
 
             if result['pass'] is None:
-                pass_fail_str = "N/A"
+                ratio = "-.--"
+                pass_fail_str = "SKIP"
+                if want_color_output():
+                    hilite = ANSI.COLOR_SKIPPED
+                    lolite = ANSI.COLOR_DEFAULT
             elif result['pass']:
+                ratio = format(result['ratio'], "0.2f")
                 pass_fail_str = "PASS"
+                if want_color_output():
+                    hilite = ANSI.COLOR_PASSED
+                    lolite = ANSI.COLOR_DEFAULT
             else:
+                ratio = format(result['ratio'], "0.2f")
                 pass_fail_str = "FAIL"
                 if want_color_output():
-                    hilite = ANSI.COLOR_HILITE_SUMMARY
+                    hilite = ANSI.COLOR_FAILED
                     lolite = ANSI.COLOR_DEFAULT
 
             test_dict = dict(
@@ -513,7 +559,7 @@ class RegressionManager:
                 b=pass_fail_str,
                 c=result['sim'],
                 d=result['real'],
-                e=result['ratio'],
+                e=ratio,
                 a_len=TEST_FIELD_LEN,
                 b_len=RESULT_FIELD_LEN,
                 c_len=SIM_FIELD_LEN - 1,
@@ -526,22 +572,21 @@ class RegressionManager:
 
         summary += LINE_SEP
 
-        self.log.info(summary)
+        summary += test_line.format(
+            a=TOTAL_NAME,
+            b="",
+            c=sim_time_ns,
+            d=real_time,
+            e=format(ratio_time, "0.2f"),
+            a_len=TEST_FIELD_LEN,
+            b_len=RESULT_FIELD_LEN,
+            c_len=SIM_FIELD_LEN - 1,
+            d_len=REAL_FIELD_LEN - 1,
+            e_len=RATIO_FIELD_LEN - 1,
+            start="",
+            end="")
 
-    def _log_sim_summary(self) -> None:
-        real_time = time.time() - self.start_time
-        sim_time_ns = get_sim_time('ns')
-        ratio_time = self._safe_divide(sim_time_ns, real_time)
-
-        summary = ""
-
-        summary += "*************************************************************************************\n"
-        summary += f"**                                 ERRORS : {self.failures:<39}**\n"
-        summary += "*************************************************************************************\n"
-        summary += "**                               SIM TIME : {:<39}**\n".format(f'{sim_time_ns:.2f} NS')
-        summary += "**                              REAL TIME : {:<39}**\n".format(f'{real_time:.2f} S')
-        summary += "**                        SIM / REAL TIME : {:<39}**\n".format(f'{ratio_time:.2f} NS/S')
-        summary += "*************************************************************************************\n"
+        summary += LINE_SEP
 
         self.log.info(summary)
 
@@ -573,13 +618,11 @@ def _create_test(function, name, documentation, mod, *args, **kwargs):
     Returns:
         Decorated test function
     """
+
+    @wraps(function)
     async def _my_test(dut):
         await function(dut, *args, **kwargs)
 
-    _my_test.__name__ = name
-    _my_test.__qualname__ = name
-    _my_test.__doc__ = documentation
-    _my_test.__module__ = mod.__name__
     return cocotb.test()(_my_test)
 
 
@@ -587,7 +630,7 @@ class TestFactory:
     """Factory to automatically generate tests.
 
     Args:
-        test_function: The function that executes a test.
+        test_function: A Callable that returns the test Coroutine.
             Must take *dut* as the first argument.
         *args: Remaining arguments are passed directly to the test function.
             Note that these arguments are not varied. An argument that
@@ -637,21 +680,12 @@ class TestFactory:
 
     .. versionchanged:: 1.5
         Groups of options are now supported
-
-    .. versionchanged:: 2.0
-        Options are listed in test names instead of a counter
     """
 
     # Prevent warnings from collection of TestFactories by unit testing frameworks.
     __test__ = False
 
     def __init__(self, test_function, *args, **kwargs):
-        if sys.version_info > (3, 6) and inspect.isasyncgenfunction(test_function):
-            raise TypeError("Expected a coroutine function, but got the async generator '{}'. "
-                            "Did you forget to convert a `yield` to an `await`?"
-                            .format(test_function.__qualname__))
-        if not (isinstance(test_function, cocotb.coroutine) or inspect.iscoroutinefunction(test_function)):
-            raise TypeError("TestFactory requires a cocotb coroutine")
         self.test_function = test_function
         self.name = self.test_function.__qualname__
 
@@ -711,6 +745,9 @@ class TestFactory:
                 product(*d.values())
         ):
 
+            name = "%s%s%s_%03d" % (prefix, self.name, postfix, index + 1)
+            doc = "Automatically generated test\n\n"
+
             # preprocess testoptions to split tuples
             testoptions_split = {}
             for optname, optvalue in testoptions.items():
@@ -722,8 +759,6 @@ class TestFactory:
                     for n, v in zip(optname, optvalue):
                         testoptions_split[n] = v
 
-            doc = "Automatically generated test\n\n"
-
             for optname, optvalue in testoptions_split.items():
                 if callable(optvalue):
                     if not optvalue.__doc__:
@@ -734,19 +769,15 @@ class TestFactory:
                 else:
                     doc += "\t{}: {}\n".format(optname, repr(optvalue))
 
+            self.log.debug("Adding generated test \"%s\" to module \"%s\"" %
+                           (name, mod.__name__))
             kwargs = {}
             kwargs.update(self.kwargs_constant)
             kwargs.update(testoptions_split)
-
-            options_str = ",".join(f"{optname}={optvalue!r}" for optname, optvalue in kwargs.items())
-            name = f"{prefix}{self.name}{postfix}({options_str})"
-
             if hasattr(mod, name):
                 self.log.error("Overwriting %s in module %s. "
                                "This causes a previously defined testcase "
                                "not to be run. Consider setting/changing "
-                               "the postfix option" % (name, mod))
-
-            self.log.debug(f"Adding generated test {name!r} to module {mod.__name__!r}")
+                               "name_postfix" % (name, mod))
             setattr(mod, name, _create_test(self.test_function, name, doc, mod,
                                             *self.args, **kwargs))

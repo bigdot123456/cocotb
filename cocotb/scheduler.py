@@ -538,6 +538,11 @@ class Scheduler:
             except Exception as e:
                 coro.log.error("Exception raised by this forked coroutine")
                 e = remove_traceback_frames(e, ['_unschedule', 'get'])
+                warnings.warn(
+                    '"Unwatched" tasks that throw exceptions will not cause the test to fail. '
+                    "See issue #2664 for more details.",
+                    FutureWarning
+                )
                 self._abort_test(e)
 
     def _schedule_write(self, handle, write_func, *args):
@@ -696,7 +701,7 @@ class Scheduler:
 
         if isinstance(coroutine, RunningTask):
             return coroutine
-        if inspect.iscoroutine(coroutine):
+        if isinstance(coroutine, Coroutine):
             return RunningTask(coroutine)
         if inspect.iscoroutinefunction(coroutine):
             raise TypeError(
@@ -746,6 +751,8 @@ class Scheduler:
         starts the given coroutine only after the current coroutine yields control.
         This is useful when the coroutine to be forked has logic before the first
         :keyword:`await` that may not be safe to execute immediately.
+
+        .. versionadded:: 1.5
         """
 
         task = self.create_task(coro)

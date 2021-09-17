@@ -21,4 +21,9 @@ MODULE := "\
 	test_logging,\
 	test_pytest,\
 	test_queues,\
+	test_utils,\
 	"
+
+ifeq ($(SIM),questa)
+	SIM_ARGS := "-t ps"
+endif

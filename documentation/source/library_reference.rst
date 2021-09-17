@@ -58,6 +58,12 @@ Interacting with the Simulator
 
 .. autofunction:: cocotb.fork
 
+.. autofunction:: cocotb.start_soon
+
+.. autofunction:: cocotb.start
+
+.. autofunction:: cocotb.create_task
+
 .. autofunction:: cocotb.decorators.RunningTask.join
 
 .. autofunction:: cocotb.decorators.RunningTask.kill
@@ -84,6 +90,9 @@ as the types used by cocotb's `simulator handles <#simulation-object-handles>`_.
 .. autoclass:: cocotb.types.Array
     :members:
     :exclude-members: count, index
+
+.. autoclass:: cocotb.types.LogicArray
+    :members:
 
 Triggers
 --------
@@ -151,7 +160,7 @@ Logging
 
 .. attribute:: logging.LogRecord.created_sim_time
 
-    The result of :func:`get_sim_time` at the point the log was created
+    The result of :func:`~cocotb.utils.get_sim_time` at the point the log was created
     (in simulator units). The formatter is responsible for converting this
     to something like nanoseconds via :func:`~cocotb.utils.get_time_from_sim_steps`.
 

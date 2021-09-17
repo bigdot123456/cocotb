@@ -100,6 +100,13 @@ jobs:
             python-version: 3.9
             os: ubuntu-20.04
 
+          - sim: icarus
+            sim-version: apt
+            lang: verilog
+            python-version: "3.10.0-alpha - 3.10"
+            os: ubuntu-20.04
+            may_fail: true
+
             # Test Icarus dev on Ubuntu
 
           - sim: icarus
@@ -115,7 +122,6 @@ jobs:
             lang: vhdl
             python-version: 3.8
             os: ubuntu-latest
-            may_fail: true
 
             # Test Verilator on Ubuntu
 
@@ -325,3 +331,42 @@ jobs:
           -n "${{matrix.extra_name}}${{matrix.sim}} (${{matrix.sim-version}}) | ${{matrix.os}} | Python ${{matrix.python-version}}" \
           -e SIM,TOPLEVEL_LANG,CXX,OS,PYTHON_VERSION \
           -a "-rl"
+
+  mingw-env:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sim: verilator
+            lang: verilog
+            pkg: verilator
+            may_fail: true
+          - sim: icarus
+            lang: verilog
+            pkg: iverilog
+          - sim: ghdl
+            lang: vhdl
+            pkg: ghdl-llvm
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+    - uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: |
+            git
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python-pip
+            mingw-w64-x86_64-python-pytest
+            mingw-w64-x86_64-python-wheel
+            mingw-w64-x86_64-${{ matrix.pkg }}
+    - uses: actions/checkout@v2
+    - name: install cocotb
+      run: pip install --no-build-isolation .
+    - name: run regressions
+      run: make SIM=${{ matrix.sim }} TOPLEVEL_LANG=${{ matrix.lang }}
+      continue-on-error: ${{matrix.may_fail || false}}

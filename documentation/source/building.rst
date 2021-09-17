@@ -91,8 +91,10 @@ Cocotb
 
 .. envvar:: COCOTB_REDUCED_LOG_FMT
 
-    If defined, log lines displayed in the terminal will be shorter. It will print only
-    time, message type (``INFO``, ``WARNING``, ``ERROR``, ...) and the log message itself.
+    Defaults internally to ``1``.
+    If the value is ``1``, log lines displayed in the terminal will be shorter.
+    It will print only time, message type (``INFO``, ``WARNING``, ``ERROR``, ...) and the log message itself.
+    Set to ``0`` if you wish to have the full format message.
 
 .. envvar:: COCOTB_ATTACH
 
@@ -216,6 +218,29 @@ GPI
         and loading from libraries that `aren't` prefixed with "lib".
         Paths `should not` contain commas.
 
+PyGPI
+-----
+
+.. envvar:: PYGPI_ENTRY_POINT
+
+    The Python module and callable that starts up the Python cosimulation environment.
+    This defaults to :data:`cocotb:_initialise_testbench`, which is the cocotb standard entry point.
+    User overloads can be used to enter alternative Python frameworks or to hook existing cocotb functionality.
+    The variable is formatted as ``path.to.entry.module:entry_point.function``.
+    The string before the colon is the Python module to import
+    and the string following the colon is the object to call as the entry function.
+
+    The entry function must be a callable matching this form:
+
+    * ``entry_function(argv: List[str]) -> None``
+
+    The entry module must have the following additional functions defined.
+    These additional requirements on the entry module may be relaxed over time.
+
+    * ``_sim_event(level: int) -> None``
+    * ``_log_from_c(logger_name: str, level: int, filename: str, lineno: int, msg: str, function_name: str)) -> None``
+    * ``_filter_from_c(logger_name: str, level: int) -> bool``
+
 
 Makefile-based Test Scripts
 ---------------------------
@@ -261,7 +286,11 @@ The following variables are makefile variables, not environment variables.
 
 .. make:var:: VHDL_SOURCES_<lib>
 
-      A list of the VHDL source files to include in the VHDL library *lib* (currently for GHDL/ModelSim/Questa only).
+      A list of the VHDL source files to include in the VHDL library *lib* (currently for GHDL/ModelSim/Questa/Xcelium only).
+
+.. make:var:: VHDL_LIB_ORDER
+
+      A space-separated list defining the order in which VHDL libraries should be compiled (needed for ModelSim/Questa/Xcelium, GHDL determines the order automatically).
 
 .. make:var:: COMPILE_ARGS
 
@@ -291,6 +320,16 @@ The following variables are makefile variables, not environment variables.
       The special plusargs ``+ntb_random_seed`` and ``+seed``, if present, are evaluated
       to set the random seed value if :envvar:`RANDOM_SEED` is not set.
       If both ``+ntb_random_seed`` and ``+seed`` are set, ``+ntb_random_seed`` is used.
+
+.. make:var:: SIM_CMD_PREFIX
+
+      Prefix for simulation command invocations.
+
+      This can be used to add environment variables or other commands before the invocations of simulation commands.
+      For example, ``SIM_CMD_PREFIX := LD_PRELOAD="foo.so bar.so"`` can be used to force a particular library to load.
+      Or, ``SIM_CMD_PREFIX := gdb --args`` to run the simulation with the GDB debugger.
+
+      .. versionadded:: 1.6.0
 
 .. make:var:: COCOTB_HDL_TIMEUNIT
 
